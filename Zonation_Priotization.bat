@@ -4,19 +4,18 @@ setlocal enabledelayedexpansion
 rem ==========================================================================
 rem SCRIPT: Automated Zonation5 Prioritization
 rem AUTHOR: Oluwadamilola Ogundipe
-rem PURPOSE: Automates species prioritization by iterating through species lists 
-rem          and applying specific hierarchical mask layers.
+rem PURPOSE: Automates Zonation5 (CAZ1) runs using three PA suitability filters.
 rem ==========================================================================
 
 rem --- CONFIGURATION ---
-rem Change "SET MODE=" to: global, local, or local_avg
+rem Set MODE to: global (all PAs), local (75th percentile), or local_avg (average)
 set "MODE=global"
 
 set "Z5_PATH=C:\Program Files (x86)\Zonation5\z5w.exe"
 set "BASE_PATH=%USERPROFILE%\Documents\OneDrive - Eidg. Forschungsanstalt WSL\visua"
 set "BIN_FOLDER=%BASE_PATH%\bin_file"
 
-rem --- SET MASKING LOGIC BASED ON MODE ---
+rem --- MASKING LOGIC ---
 if /I "%MODE%"=="global" (
     set "MASK_PATH=%BASE_PATH%/totalpa.tif"
 ) else if /I "%MODE%"=="local" (
@@ -25,12 +24,10 @@ if /I "%MODE%"=="global" (
     set "MASK_DIR=%cd%\AI_avg"
 )
 
-rem Create Output Directory
 set "OUTPUT_DIR=%cd%\Output"
 mkdir "%OUTPUT_DIR%" 2>nul
 
-rem --- PROCESSING LOOP ---
-echo Starting Zonation processing in [%MODE%] mode...
+echo Starting Zonation in [%MODE%] mode...
 
 for %%F in ("%BIN_FOLDER%\*.txt") do (
     set "FILENAME=%%~nF"
@@ -40,7 +37,6 @@ for %%F in ("%BIN_FOLDER%\*.txt") do (
     
     copy /Y "%%F" "!FILE_FOLDER!" >nul
 
-    rem Generate setting.txt with dynamic mask logic
     (
         echo feature list file = !FILENAME!.txt
         if /I "%MODE%"=="global" (
@@ -50,10 +46,8 @@ for %%F in ("%BIN_FOLDER%\*.txt") do (
         )
     ) > "!FILE_FOLDER!\setting.txt"
 
-    rem Run Zonation5
     "%Z5_PATH%" "--mode=CAZ1" "-h" "!FILE_FOLDER!\setting.txt" "!FILE_FOLDER!\final_output"
 )
 
-echo.
-echo Process Complete. Check the Output folder for results.
+echo Process Complete.
 pause
