@@ -1,40 +1,110 @@
 # Zonation-Automation-Prioritization
-Batch-processing for multi-species conservation planning and spatial prioritization using Zonation5
 
-Zonation5 Automation: PA Suitability Filtering Framework
-Developed by Oluwadamilola Ogundipe
+Automated multi-species conservation planning and spatial prioritization using Zonation 5
 
-Overview
-This repository provides a complete end-to-end pipeline for multi-species spatial prioritization using Zonation5 (CAZ1). The workflow addresses the challenge of applying species-specific scientific filters to Protected Area (PA) networks at scale by combining R-based spatial analysis with Windows Batch automation.
+## Overview
 
-Project Components
-PA_Suitability_Extraction.R: This script performs the core spatial analysis. It extracts suitability values from SDM rasters and generates species-specific PA masks based on scientific thresholds.
+This repository demonstrates a reproducible spatial conservation-planning workflow combining R-based spatial analysis with Windows Batch automation and Zonation 5 (CAZ1).
 
-Zonation_Automation.bat: This master script handles the high-volume processing. It iterates through species lists and automatically pairs them with the generated masks for Zonation5 runs.
+The workflow uses species-specific suitability information to:
 
-Filtering Strategies (Modes)
-The pipeline facilitates three distinct conservation scenarios by filtering the PA network based on species suitability scores:
+- assess suitability within existing Protected Areas;
+- generate species-specific Protected Area masks;
+- identify ecological hotspots from overlapping suitability layers; and
+- automate repeated Zonation 5 prioritization runs.
 
-Global: Analysis using the entire Protected Area network within the study region.
+## Workflow
 
-75th Percentile: Analysis restricted to PAs meeting the 75th suitability percentile for the specific target species.
+### Main Zonation workflow
 
-Average: Analysis restricted to PAs meeting the average suitability threshold for the specific target species.
+```text
+Species-specific SDM rasters
+            │
+            ▼
+01_PA_Suitability_and_Mask_Generation.R
+            │
+            ├── AI_75/
+            │
+            └── AI_avg/
+            │
+            ▼
+03_Zonation_Automation.bat
+            │
+            ▼
+       Zonation 5 (CAZ1)
+            │
+            ▼
+         Output/
+Ecological hotspot workflow
+Binary top-third suitability rasters
+            │
+            ▼
+02_Ecological_Hotspot_Synthesis.R
+            │
+            ▼
+Ecological hotspot outputs
+Scripts
+01_PA_Suitability_and_Mask_Generation.R
+
+Evaluates species-specific suitability within existing Protected Areas and generates raster masks using:
+
+75th-percentile suitability threshold
+mean suitability threshold
+
+Outputs are written to AI_75/ and AI_avg/.
+
+02_Ecological_Hotspot_Synthesis.R
+
+Calculates the overlap of binary suitability rasters and classifies areas according to the number of overlapping layers.
+
+03_Zonation_Automation.bat
+
+Automates Zonation 5 runs by:
+
+reading feature lists from bin_file/;
+selecting the appropriate PA mask;
+generating Zonation settings files; and
+running Zonation 5 automatically.
+Scenarios
+
+Global — uses the complete Protected Area network.
+
+75th Percentile — uses Protected Areas with mean suitability above the 75th percentile.
+
+Average — uses Protected Areas with mean suitability above the overall mean.
 
 Directory Structure
-bin_file/: Input directory for species list .txt files.
+Zonation-Automation-Prioritization/
+│
+├── README.md
+├── 01_PA_Suitability_and_Mask_Generation.R
+├── 02_Ecological_Hotspot_Synthesis.R
+├── 03_Zonation_Automation.bat
+│
+├── bin_file/
+├── AI_75/
+├── AI_avg/
+├── Output/
+└── Final/
+    └── Comp_F/
+        └── masked/
+            └── top_third_binary/
 
-AI_75/: Directory for hierarchical masks meeting the 75th percentile criteria.
+Project-specific datasets are not included.
 
-AI_avg/: Directory for hierarchical masks meeting the average suitability criteria.
+Requirements
+R 4.1+
+R package: terra
+Windows
+Zonation 5
 
-Output/: Results folder automatically generated to store setting.txt files and Zonation outputs.
+The Zonation executable path is configured in 03_Zonation_Automation.bat.
 
 How to Use
-Pre-processing: Run PA_Suitability_Extraction.R to generate your species-specific masks into the AI_ folders.
+Run 01_PA_Suitability_and_Mask_Generation.R.
+Set MODE in 03_Zonation_Automation.bat to global, local, or local_avg.
+Run the batch script to execute the Zonation workflow.
+Run 02_Ecological_Hotspot_Synthesis.R separately for the hotspot analysis.
+Reproducibility
 
-Setup: Ensure Zonation5 is installed at C:\Program Files (x86)\Zonation5\.
-
-Configuration: Open Zonation_Automation.bat and set the MODE variable to global, local, or local_avg.
-
-Execution: Run the .bat file to process all species lists in the bin_file directory.
+The repository uses project-relative paths, explicit suitability thresholds, consistent raster processing, and automated Zonation execution to support reproducible spatial prioritization workflows.
