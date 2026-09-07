@@ -1,25 +1,24 @@
- ============================================================================
-# SCRIPT 01: PA Suitability Filtering and Mask Generation
+
+# SCRIPT: Spatial Filtering of Protected Areas (PAs) Based on SDM Suitability
 # AUTHOR: Oluwadamilola Ogundipe
 #
 # PURPOSE
-#   Extracts mean suitability values from species-specific SDM rasters for
-#   existing Protected Areas (PAs), identifies suitable PAs using alternative
-#   suitability thresholds, and rasterizes the selected PAs to the analysis
-#   grid for use in spatial conservation prioritisation.
+#   Extracts mean suitability values from species-specific SDM rasters,
+#   identifies suitable Protected Areas (PAs) using two alternative
+#   suitability thresholds, and rasterizes the selected PAs to the same
+#   spatial grid as the SDM raster for use in Zonation 5.
 #
 # SCENARIOS
-#   1. 75th percentile: PAs with suitability above the 75th percentile
-#   2. Mean suitability: PAs with suitability above the mean
+#   1. 75th Percentile: PAs above the 75th suitability percentile
+#   2. Average: PAs above the mean suitability
 #
 # INPUTS
-#   - Protected Area vector dataset with an 'ha' area field
-#   - Species-specific SDM suitability rasters (.tif)
-#   - Reference raster defining the analysis grid
+#   - oei_betrieb.gpkg
+#   - SDM suitability rasters in bin_dv/
 #
 # OUTPUTS
-#   - Species-specific vector PA selections
-#   - Species-specific raster PA masks for each suitability scenario
+#   - Filtered PA shapefiles in p75/ and pavg/
+#   - Raster PA masks in p75/ and pavg/
 #
 # SOFTWARE
 #   R >= 4.1
@@ -28,14 +27,13 @@
 #   terra
 #
 # NOTE
-#   Set SDM_PROJECT_DIR to the project root before running. The repository
-#   should contain only example/public input data or documented placeholders;
-#   WSL/project-specific data should not be committed.
+#   The original project-specific WSL/OneDrive path has been replaced by a
+#   project-relative path so the script can be reused on another machine.
 # ============================================================================
 
 
 # ----------------------------------------------------------------------------
-# 1. PACKAGE CHECK
+# 1. PACKAGE
 # ----------------------------------------------------------------------------
 
 if (!requireNamespace("terra", quietly = TRUE)) {
@@ -52,105 +50,72 @@ library(terra)
 # 2. CONFIGURATION
 # ----------------------------------------------------------------------------
 
-# Example:
-# Sys.setenv(SDM_PROJECT_DIR = "C:/path/to/your/project")
-
-project_dir <- Sys.getenv("SDM_PROJECT_DIR")
-
-if (project_dir == "") {
-  stop(
-    paste(
-      "Project directory not set.",
-      "Set the 'SDM_PROJECT_DIR' environment variable",
-      "or replace project_dir with your local project directory."
-    ),
-    call. = FALSE
-  )
-}
-
-# Input data
-pa_file <- file.path(
-  project_dir,
-  "data",
-  "protected_areas.gpkg"
+# The script is expected to be stored in the project's scripts/ folder.
+script_dir <- normalizePath(
+  dirname(commandArgs(trailingOnly = FALSE)[
+    grep("^--file=", commandArgs(trailingOnly = FALSE))
+  ][1]),
+  winslash = "/",
+  mustWork = FALSE
 )
 
-sdm_dir <- file.path(
-  project_dir,
-  "data",
-  "sdm_rasters"
+# Project root: one level above scripts/
+base_dir <- normalizePath(
+  file.path(script_dir, ".."),
+  winslash = "/",
+  mustWork = FALSE
 )
 
-# Reference raster used to define resolution, extent and CRS
-reference_raster_file <- file.path(
-  project_dir,
-  "data",
-  "reference_grid.tif"
+# Protected Area input
+shp_path <- file.path(
+  base_dir,
+  "oei_betrieb.gpkg"
 )
 
-# Output directories
-vector_p75_dir <- file.path(
-  project_dir,
-  "outputs",
-  "pa_vectors_p75"
+# Species SDM rasters
+raster_path <- file.path(
+  base_dir,
+  "bin_dv"
 )
 
-vector_mean_dir <- file.path(
-  project_dir,
-  "outputs",
-  "pa_vectors_mean"
+# Original output folder names retained
+p75_dir <- file.path(
+  base_dir,
+  "p75"
 )
 
-raster_p75_dir <- file.path(
-  project_dir,
-  "outputs",
-  "pa_masks_p75"
-)
-
-raster_mean_dir <- file.path(
-  project_dir,
-  "outputs",
-  "pa_masks_mean"
+pavg_dir <- file.path(
+  base_dir,
+  "pavg"
 )
 
 # Analysis parameters
 minimum_pa_area_ha <- 0.0025
-suitability_quantile <- 0.75
-
-# Background value for rasterized PA masks
-mask_background <- 0
+p75 <- 0.75
 
 
 # ----------------------------------------------------------------------------
 # 3. VALIDATE INPUTS
 # ----------------------------------------------------------------------------
 
-if (!file.exists(pa_file)) {
+if (!file.exists(shp_path)) {
   stop(
-    "Protected Area input not found: ",
-    pa_file,
+    "Protected Area dataset not found: ",
+    shp_path,
     call. = FALSE
   )
 }
 
-if (!dir.exists(sdm_dir)) {
+if (!dir.exists(raster_path)) {
   stop(
     "SDM raster directory not found: ",
-    sdm_dir,
-    call. = FALSE
-  )
-}
-
-if (!file.exists(reference_raster_file)) {
-  stop(
-    "Reference raster not found: ",
-    reference_raster_file,
+    raster_path,
     call. = FALSE
   )
 }
 
 raster_files <- list.files(
-  sdm_dir,
+  raster_path,
   pattern = "\\.tif$",
   full.names = TRUE,
   ignore.case = TRUE
@@ -158,41 +123,36 @@ raster_files <- list.files(
 
 if (length(raster_files) == 0) {
   stop(
-    "No SDM raster files (.tif) were found in: ",
-    sdm_dir,
+    "No SDM raster files were found in: ",
+    raster_path,
     call. = FALSE
   )
 }
 
-# Create output directories
-output_dirs <- c(
-  vector_p75_dir,
-  vector_mean_dir,
-  raster_p75_dir,
-  raster_mean_dir
+dir.create(
+  p75_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
 )
 
-for (dir_path in output_dirs) {
-  dir.create(
-    dir_path,
-    recursive = TRUE,
-    showWarnings = FALSE
-  )
-}
+dir.create(
+  pavg_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
 
 
 # ----------------------------------------------------------------------------
-# 4. LOAD PROTECTED AREAS AND REFERENCE GRID
+# 4. LOAD PROTECTED AREAS
 # ----------------------------------------------------------------------------
 
 message("Loading Protected Areas...")
 
-pa <- vect(pa_file)
+pa <- vect(shp_path)
 
 if (!"ha" %in% names(pa)) {
   stop(
-    "The Protected Area dataset must contain an 'ha' field ",
-    "containing area in hectares.",
+    "The Protected Area dataset does not contain the required 'ha' field.",
     call. = FALSE
   )
 }
@@ -204,25 +164,10 @@ if (is.na(crs(pa)) || crs(pa) == "") {
   )
 }
 
-reference_raster <- rast(reference_raster_file)
-
-if (is.na(crs(reference_raster)) || crs(reference_raster) == "") {
-  stop(
-    "The reference raster does not have a valid CRS.",
-    call. = FALSE
-  )
-}
-
 
 # ----------------------------------------------------------------------------
 # 5. FILTER PROTECTED AREAS
 # ----------------------------------------------------------------------------
-
-message(
-  "Filtering Protected Areas smaller than ",
-  minimum_pa_area_ha,
-  " ha..."
-)
 
 pa <- pa[
   !is.na(pa$ha) &
@@ -236,11 +181,14 @@ if (nrow(pa) == 0) {
   )
 }
 
-message("Protected Areas retained: ", nrow(pa))
+message(
+  "Protected Areas retained after area filter: ",
+  nrow(pa)
+)
 
 
 # ----------------------------------------------------------------------------
-# 6. PROCESS SPECIES SDM RASTERS
+# 6. PROCESS EACH SDM RASTER
 # ----------------------------------------------------------------------------
 
 message(
@@ -260,23 +208,24 @@ for (i in seq_along(raster_files)) {
 
 
   # --------------------------------------------------------------------------
-  # 6.1 LOAD SDM RASTER
+  # 6.1 READ SDM RASTER
   # --------------------------------------------------------------------------
 
-  sdm <- rast(raster_file)
+  sm <- rast(raster_file)
 
-  if (nlyr(sdm) != 1) {
+  if (nlyr(sm) != 1) {
     warning(
-      "Raster contains more than one layer: ",
+      "More than one layer found in ",
       basename(raster_file),
-      ". Only the first layer will be used."
+      "; using the first layer."
     )
-    sdm <- sdm[[1]]
+
+    sm <- sm[[1]]
   }
 
-  if (is.na(crs(sdm)) || crs(sdm) == "") {
+  if (is.na(crs(sm)) || crs(sm) == "") {
     stop(
-      "SDM raster has no CRS: ",
+      "SDM raster has no valid CRS: ",
       basename(raster_file),
       call. = FALSE
     )
@@ -284,60 +233,59 @@ for (i in seq_along(raster_files)) {
 
 
   # --------------------------------------------------------------------------
-  # 6.2 TRANSFORM PA GEOMETRY TO SDM CRS
+  # 6.2 MATCH PA CRS TO SDM CRS
   # --------------------------------------------------------------------------
 
   pa_sdm <- pa
 
-  if (!same.crs(sdm, pa_sdm)) {
-    message(
-      "  Transforming Protected Areas to SDM CRS."
-    )
+  if (!same.crs(sm, pa_sdm)) {
+
+    message("  Transforming Protected Areas to SDM CRS.")
 
     pa_sdm <- project(
       pa_sdm,
-      crs(sdm)
+      crs(sm)
     )
   }
 
 
   # --------------------------------------------------------------------------
-  # 6.3 EXTRACT MEAN SDM SUITABILITY BY PA
+  # 6.3 EXTRACT MEAN SDM SUITABILITY FOR EACH PA
   # --------------------------------------------------------------------------
 
-  extracted <- terra::extract(
-    sdm,
+  suitability_score <- terra::extract(
+    sm,
     pa_sdm,
     fun = mean,
     na.rm = TRUE
   )
 
-  if (ncol(extracted) < 2) {
+  if (ncol(suitability_score) < 2) {
 
     warning(
-      "No suitability values were returned for: ",
+      "No suitability values were returned for ",
       basename(raster_file),
-      ". Skipping."
+      "; skipping."
     )
 
     next
   }
 
-  suitability_column <- names(extracted)[2]
+  suitability_column <- names(suitability_score)[2]
 
-  extracted$mean_suitability <- extracted[[suitability_column]]
+  suitability_score$Mean_SM <- suitability_score[[suitability_column]]
 
-  extracted <- extracted[
-    !is.na(extracted$mean_suitability),
-    c("ID", "mean_suitability")
+  suitability_score <- suitability_score[
+    !is.na(suitability_score$Mean_SM),
+    c("ID", "Mean_SM")
   ]
 
-  if (nrow(extracted) == 0) {
+  if (nrow(suitability_score) == 0) {
 
     warning(
-      "No valid suitability values found for: ",
+      "No valid suitability values found for ",
       basename(raster_file),
-      ". Skipping."
+      "; skipping."
     )
 
     next
@@ -350,172 +298,159 @@ for (i in seq_along(raster_files)) {
 
   p75_threshold <- as.numeric(
     quantile(
-      extracted$mean_suitability,
-      probs = suitability_quantile,
+      suitability_score$Mean_SM,
+      probs = p75,
       na.rm = TRUE,
       names = FALSE
     )
   )
 
   mean_threshold <- mean(
-    extracted$mean_suitability,
+    suitability_score$Mean_SM,
     na.rm = TRUE
   )
 
 
   # --------------------------------------------------------------------------
-  # 6.5 MATCH SUITABILITY VALUES BACK TO PA FEATURES
+  # 6.5 ATTACH SUITABILITY SCORES TO PA FEATURES
   # --------------------------------------------------------------------------
 
-  pa_with_scores <- pa_sdm
+  pa_scored <- pa_sdm
 
-  pa_with_scores$mean_suitability <- NA_real_
+  pa_scored$Mean_SM <- NA_real_
 
-  pa_with_scores$mean_suitability[
-    extracted$ID
-  ] <- extracted$mean_suitability
+  pa_scored$Mean_SM[
+    suitability_score$ID
+  ] <- suitability_score$Mean_SM
 
 
   # --------------------------------------------------------------------------
-  # 6.6 SELECT SUITABLE PAs
+  # 6.6 APPLY PA SUITABILITY FILTERS
   # --------------------------------------------------------------------------
 
-  pa_p75 <- pa_with_scores[
-    !is.na(pa_with_scores$mean_suitability) &
-      pa_with_scores$mean_suitability > p75_threshold,
+  # 75th percentile: top 25% of PA segments
+  relev_pas_p75 <- pa_scored[
+    !is.na(pa_scored$Mean_SM) &
+      pa_scored$Mean_SM > p75_threshold,
   ]
 
-  pa_mean <- pa_with_scores[
-    !is.na(pa_with_scores$mean_suitability) &
-      pa_with_scores$mean_suitability > mean_threshold,
+  # Average: above-average PA segments
+  relev_pas_avg <- pa_scored[
+    !is.na(pa_scored$Mean_SM) &
+      pa_scored$Mean_SM > mean_threshold,
   ]
 
 
   # --------------------------------------------------------------------------
-  # 6.7 REPROJECT SELECTED PAs TO ANALYSIS GRID CRS
-  # --------------------------------------------------------------------------
-
-  pa_p75_grid <- pa_p75
-  pa_mean_grid <- pa_mean
-
-  if (!same.crs(reference_raster, pa_p75_grid)) {
-
-    pa_p75_grid <- project(
-      pa_p75_grid,
-      crs(reference_raster)
-    )
-
-    pa_mean_grid <- project(
-      pa_mean_grid,
-      crs(reference_raster)
-    )
-  }
-
-
-  # --------------------------------------------------------------------------
-  # 6.8 CREATE RASTER PA MASKS
-  # --------------------------------------------------------------------------
-
-  pa_p75_raster <- rasterize(
-    pa_p75_grid,
-    reference_raster,
-    field = 1,
-    background = mask_background
-  )
-
-  pa_mean_raster <- rasterize(
-    pa_mean_grid,
-    reference_raster,
-    field = 1,
-    background = mask_background
-  )
-
-
-  # --------------------------------------------------------------------------
-  # 6.9 CREATE OUTPUT NAMES
+  # 6.7 SAVE FILTERED VECTOR PAs
   # --------------------------------------------------------------------------
 
   species_name <- tools::file_path_sans_ext(
     basename(raster_file)
   )
 
-  p75_vector_output <- file.path(
-    vector_p75_dir,
-    paste0(species_name, ".gpkg")
+  p75_vector <- file.path(
+    p75_dir,
+    paste0(species_name, ".shp")
   )
 
-  mean_vector_output <- file.path(
-    vector_mean_dir,
-    paste0(species_name, ".gpkg")
+  pavg_vector <- file.path(
+    pavg_dir,
+    paste0(species_name, ".shp")
   )
-
-  p75_raster_output <- file.path(
-    raster_p75_dir,
-    paste0("result_", species_name, ".tif")
-  )
-
-  mean_raster_output <- file.path(
-    raster_mean_dir,
-    paste0("result_", species_name, ".tif")
-  )
-
-
-  # --------------------------------------------------------------------------
-  # 6.10 SAVE VECTOR AND RASTER OUTPUTS
-  # --------------------------------------------------------------------------
 
   writeVector(
-    pa_p75,
-    p75_vector_output,
+    relev_pas_p75,
+    p75_vector,
     overwrite = TRUE
   )
 
   writeVector(
-    pa_mean,
-    mean_vector_output,
+    relev_pas_avg,
+    pavg_vector,
     overwrite = TRUE
+  )
+
+
+  # --------------------------------------------------------------------------
+  # 6.8 RASTERIZE SELECTED PAs TO THE SDM GRID
+  # --------------------------------------------------------------------------
+
+  # The SDM raster is used as the reference grid so that the resulting
+  # hierarchical masks have the same extent, resolution and CRS as the
+  # suitability data supplied to Zonation.
+
+  pa_p75_raster <- rasterize(
+    relev_pas_p75,
+    sm,
+    field = 1,
+    background = 0
+  )
+
+  pa_avg_raster <- rasterize(
+    relev_pas_avg,
+    sm,
+    field = 1,
+    background = 0
+  )
+
+
+  # --------------------------------------------------------------------------
+  # 6.9 SAVE RASTER PA MASKS
+  # --------------------------------------------------------------------------
+
+  p75_raster <- file.path(
+    p75_dir,
+    paste0("result_", species_name, ".tif")
+  )
+
+  pavg_raster <- file.path(
+    pavg_dir,
+    paste0("result_", species_name, ".tif")
   )
 
   writeRaster(
     pa_p75_raster,
-    p75_raster_output,
+    p75_raster,
     overwrite = TRUE
   )
 
   writeRaster(
-    pa_mean_raster,
-    mean_raster_output,
+    pa_avg_raster,
+    pavg_raster,
     overwrite = TRUE
   )
 
 
   # --------------------------------------------------------------------------
-  # 6.11 REPORT RESULTS
+  # 6.10 REPORT RESULTS
   # --------------------------------------------------------------------------
 
   message(
-    "  Valid PAs: ", nrow(extracted),
-    " | P75 threshold: ", round(p75_threshold, 4),
-    " | Mean threshold: ", round(mean_threshold, 4)
+    "  P75 threshold: ",
+    round(p75_threshold, 4),
+    " | PAs retained: ",
+    nrow(relev_pas_p75)
   )
 
   message(
-    "  P75 PAs retained: ", nrow(pa_p75),
-    " | Above-mean PAs retained: ", nrow(pa_mean)
+    "  Mean threshold: ",
+    round(mean_threshold, 4),
+    " | PAs retained: ",
+    nrow(relev_pas_avg)
   )
 }
 
 
 # ----------------------------------------------------------------------------
-# 7. COMPLETION MESSAGE
+# 7. COMPLETION
 # ----------------------------------------------------------------------------
 
 message("")
 message("============================================================")
-message("PA suitability filtering and mask generation complete.")
+message("Spatial filtering and PA mask generation complete.")
 message("")
-message("75th-percentile vector masks: ", vector_p75_dir)
-message("Above-mean vector masks:      ", vector_mean_dir)
-message("75th-percentile raster masks: ", raster_p75_dir)
-message("Above-mean raster masks:      ", raster_mean_dir)
+message("75th-percentile outputs: ", p75_dir)
+message("Above-mean outputs:      ", pavg_dir)
+message("Processed SDM rasters:   ", length(raster_files))
 message("============================================================")
