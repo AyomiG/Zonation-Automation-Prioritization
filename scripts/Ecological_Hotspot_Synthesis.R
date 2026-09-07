@@ -1,28 +1,34 @@
 # ============================================================================
-# SCRIPT: Ecological Hotspot Synthesis
+# SCRIPT 02: Ecological Hotspot Synthesis
 # AUTHOR: Oluwadamilola Ogundipe
 #
 # PURPOSE
-#   Synthesises species/habitat suitability layers by calculating the number
-#   of layers in which each cell falls within the top-third suitability class.
-#   The resulting overlap surface is classified into ecological hotspot tiers.
+#   Identifies areas of concentrated ecological suitability by stacking
+#   binary top-third suitability rasters and calculating the number of
+#   layers contributing to each spatial cell.
+#
+#   Cells are subsequently classified into three hotspot levels:
+#     1 = Low hotspot
+#     2 = Moderate hotspot
+#     3 = High hotspot
 #
 # INPUTS
 #   - Binary top-third suitability rasters (.tif)
 #
 # OUTPUTS
-#   - Raster of classified ecological hotspot levels
-#
-# ANALYTICAL LOGIC
-#   1. Stack binary suitability rasters.
-#   2. Count the number of layers contributing to each cell.
-#   3. Classify cells into low, moderate and high hotspot categories.
+#   - Raster showing the number of overlapping suitability layers
+#   - Classified ecological hotspot raster
+#   - CSV documenting hotspot classification thresholds
 #
 # SOFTWARE
 #   R >= 4.1
 #
 # PACKAGE
 #   terra
+#
+# NOTES
+#   Input rasters must share the same CRS, extent, resolution and grid.
+#   Set SDM_PROJECT_DIR to the project root before running.
 # ============================================================================
 
 
@@ -44,8 +50,9 @@ library(terra)
 # 2. CONFIGURATION
 # ----------------------------------------------------------------------------
 
-# Set the project directory before running.
-# For the public GitHub version, this should point to a local project copy.
+# Example:
+# Sys.setenv(SDM_PROJECT_DIR = "C:/path/to/your/project")
+
 project_dir <- Sys.getenv("SDM_PROJECT_DIR")
 
 if (project_dir == "") {
@@ -59,7 +66,7 @@ if (project_dir == "") {
   )
 }
 
-# Input directory containing binary top-third suitability rasters
+# Directory containing binary top-third suitability rasters
 binary_dir <- file.path(
   project_dir,
   "data",
@@ -73,13 +80,13 @@ output_dir <- file.path(
   "hotspot_synthesis"
 )
 
-# Hotspot classification thresholds
-moderate_hotspot_threshold <- 8
-high_hotspot_threshold <- 15
+# Hotspot thresholds
+moderate_threshold <- 8
+high_threshold <- 15
 
 
 # ----------------------------------------------------------------------------
-# 3. VALIDATE INPUTS
+# 3. VALIDATE INPUT DIRECTORY
 # ----------------------------------------------------------------------------
 
 if (!dir.exists(binary_dir)) {
@@ -99,7 +106,7 @@ binary_files <- list.files(
 
 if (length(binary_files) == 0) {
   stop(
-    "No top-third binary rasters were found in: ",
+    "No top-third binary suitability rasters were found in: ",
     binary_dir,
     call. = FALSE
   )
@@ -114,39 +121,48 @@ dir.create(
 message(
   "Found ",
   length(binary_files),
-  " top-third suitability raster(s)."
+  " binary suitability raster(s)."
 )
 
 
 # ----------------------------------------------------------------------------
-# 4. LOAD AND VALIDATE RASTERS
+# 4. LOAD RASTERS
 # ----------------------------------------------------------------------------
 
-message("Loading binary suitability rasters...")
+message("Loading suitability rasters...")
 
 binary_stack <- rast(binary_files)
 
-# Ensure all rasters are spatially compatible
+
+# ----------------------------------------------------------------------------
+# 5. CHECK SPATIAL COMPATIBILITY
+# ----------------------------------------------------------------------------
+
+message("Checking raster geometry...")
+
 if (!compareGeom(
   binary_stack,
   stopOnError = FALSE,
   messages = FALSE
 )) {
   stop(
-    "Input rasters do not have compatible geometry, extent, resolution or CRS.",
+    paste(
+      "Input rasters do not have matching spatial geometry.",
+      "Check CRS, extent, resolution and raster alignment."
+    ),
     call. = FALSE
   )
 }
 
 
 # ----------------------------------------------------------------------------
-# 5. SPATIAL OVERLAP SYNTHESIS
+# 6. CALCULATE SPATIAL OVERLAP
 # ----------------------------------------------------------------------------
 
 message("Calculating suitability-layer overlap...")
 
-# Each cell contains the number of binary rasters in which that cell
-# belongs to the top-third suitability class.
+# Each cell contains the number of binary suitability rasters
+# in which that cell belongs to the top-third suitability class.
 overlap_count <- sum(
   binary_stack,
   na.rm = TRUE
@@ -154,48 +170,57 @@ overlap_count <- sum(
 
 
 # ----------------------------------------------------------------------------
-# 6. HOTSPOT CLASSIFICATION
+# 7. CLASSIFY ECOLOGICAL HOTSPOTS
 # ----------------------------------------------------------------------------
 
-message("Classifying ecological hotspot levels...")
+message("Classifying ecological hotspots...")
 
-hotspots <- classify(
+hotspots <- app(
   overlap_count,
-  rcl = matrix(
-    c(
-      0,  0,  NA,
-      1,  7,  1,
-      8, 14, 2,
-      15, Inf, 3
-    ),
-    ncol = 3,
-    byrow = TRUE
-  ),
-  include.lowest = TRUE
+  fun = function(x) {
+
+    ifelse(
+      is.na(x),
+      NA,
+      ifelse(
+        x >= high_threshold,
+        3,
+        ifelse(
+          x >= moderate_threshold,
+          2,
+          ifelse(
+            x >= 1,
+            1,
+            NA
+          )
+        )
+      )
+    )
+  }
 )
 
 
 # ----------------------------------------------------------------------------
-# 7. OUTPUT METADATA
+# 8. CREATE CLASSIFICATION METADATA
 # ----------------------------------------------------------------------------
 
-hotspot_levels <- data.frame(
+hotspot_metadata <- data.frame(
   class = c(1, 2, 3),
   category = c(
     "Low hotspot",
     "Moderate hotspot",
     "High hotspot"
   ),
-  minimum_overlap = c(
-    1,
-    moderate_hotspot_threshold,
-    high_hotspot_threshold
+  overlap_range = c(
+    paste0("1-", moderate_threshold - 1),
+    paste0(moderate_threshold, "-", high_threshold - 1),
+    paste0(high_threshold, "+")
   )
 )
 
 
 # ----------------------------------------------------------------------------
-# 8. SAVE RESULTS
+# 9. DEFINE OUTPUT FILES
 # ----------------------------------------------------------------------------
 
 overlap_output <- file.path(
@@ -213,34 +238,46 @@ metadata_output <- file.path(
   "hotspot_classification.csv"
 )
 
+
+# ----------------------------------------------------------------------------
+# 10. SAVE OUTPUTS
+# ----------------------------------------------------------------------------
+
+message("Writing output rasters...")
+
 writeRaster(
   overlap_count,
-  overlap_output,
+  filename = overlap_output,
   overwrite = TRUE
 )
 
 writeRaster(
   hotspots,
-  hotspot_output,
+  filename = hotspot_output,
   overwrite = TRUE
 )
 
 write.csv(
-  hotspot_levels,
-  metadata_output,
+  hotspot_metadata,
+  file = metadata_output,
   row.names = FALSE
 )
 
 
 # ----------------------------------------------------------------------------
-# 9. REPORT
+# 11. REPORT SUMMARY
 # ----------------------------------------------------------------------------
 
 message("")
 message("============================================================")
 message("Ecological hotspot synthesis complete.")
+message("")
 message("Input rasters: ", length(binary_files))
-message("Overlap raster: ", overlap_output)
-message("Hotspot raster: ", hotspot_output)
-message("Classification metadata: ", metadata_output)
+message("Overlap output: ", overlap_output)
+message("Hotspot output: ", hotspot_output)
+message("Metadata:       ", metadata_output)
+message("")
+message(
+  "Classification: 1 = Low | 2 = Moderate | 3 = High"
+)
 message("============================================================")
