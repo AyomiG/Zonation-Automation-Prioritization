@@ -20,29 +20,22 @@
 # SOFTWARE
 #   R >= 4.1
 #
-# PACKAGES
+# PACKAGE
 #   terra
 #
 # NOTES
-#   The script is designed to run from a configurable project directory.
-#   Original WSL project-specific paths should NOT be required for reuse.
+#   Set SDM_PROJECT_DIR to the local project root before running.
+#   Project-specific WSL/OneDrive paths are intentionally not hard-coded.
 # ============================================================================
 
 
 # ----------------------------------------------------------------------------
-# 1. PACKAGES
+# 1. PACKAGE CHECK
 # ----------------------------------------------------------------------------
 
-required_packages <- c("terra")
-
-missing_packages <- required_packages[
-  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
-]
-
-if (length(missing_packages) > 0) {
+if (!requireNamespace("terra", quietly = TRUE)) {
   stop(
-    "The following required package(s) are not installed: ",
-    paste(missing_packages, collapse = ", "),
+    "Package 'terra' is required but not installed.",
     call. = FALSE
   )
 }
@@ -55,7 +48,9 @@ library(terra)
 # ----------------------------------------------------------------------------
 
 # Set this to the root directory of the project.
-# For a GitHub version, replace this with the local path on the user's machine.
+# Windows example:
+# Sys.setenv(SDM_PROJECT_DIR = "C:/path/to/your/project")
+
 project_dir <- Sys.getenv("SDM_PROJECT_DIR")
 
 if (project_dir == "") {
@@ -69,12 +64,31 @@ if (project_dir == "") {
   )
 }
 
-# Input and output locations
-pa_file       <- file.path(project_dir, "data", "protected_areas.gpkg")
-sdm_dir       <- file.path(project_dir, "data", "sdm_rasters")
+# Input locations
+pa_file <- file.path(
+  project_dir,
+  "data",
+  "protected_areas.gpkg"
+)
 
-p75_dir       <- file.path(project_dir, "outputs", "pa_masks_p75")
-pavg_dir      <- file.path(project_dir, "outputs", "pa_masks_mean")
+sdm_dir <- file.path(
+  project_dir,
+  "data",
+  "sdm_rasters"
+)
+
+# Output locations
+p75_dir <- file.path(
+  project_dir,
+  "outputs",
+  "pa_masks_p75"
+)
+
+pavg_dir <- file.path(
+  project_dir,
+  "outputs",
+  "pa_masks_mean"
+)
 
 # Analysis parameters
 minimum_pa_area_ha <- 0.0025
@@ -85,13 +99,20 @@ suitability_quantile <- 0.75
 # 3. VALIDATE INPUTS
 # ----------------------------------------------------------------------------
 
-required_paths <- c(pa_file, sdm_dir)
+if (!file.exists(pa_file)) {
+  stop(
+    "Protected Area input not found: ",
+    pa_file,
+    call. = FALSE
+  )
+}
 
-for (path in required_paths) {
-
-  if (!file.exists(path)) {
-    stop("Required input not found: ", path, call. = FALSE)
-  }
+if (!dir.exists(sdm_dir)) {
+  stop(
+    "SDM raster directory not found: ",
+    sdm_dir,
+    call. = FALSE
+  )
 }
 
 raster_files <- list.files(
@@ -109,8 +130,17 @@ if (length(raster_files) == 0) {
   )
 }
 
-dir.create(p75_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(pavg_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(
+  p75_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+dir.create(
+  pavg_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
 
 
 # ----------------------------------------------------------------------------
@@ -147,7 +177,10 @@ message(
   " ha..."
 )
 
-pa <- pa[!is.na(pa$ha) & pa$ha >= minimum_pa_area_ha, ]
+pa <- pa[
+  !is.na(pa$ha) &
+    pa$ha >= minimum_pa_area_ha,
+]
 
 if (nrow(pa) == 0) {
   stop(
@@ -163,7 +196,11 @@ message("Protected Areas retained: ", nrow(pa))
 # 6. PROCESS SPECIES SDM RASTERS
 # ----------------------------------------------------------------------------
 
-message("Processing ", length(raster_files), " SDM raster(s)...")
+message(
+  "Processing ",
+  length(raster_files),
+  " SDM raster(s)..."
+)
 
 for (i in seq_along(raster_files)) {
 
@@ -180,7 +217,6 @@ for (i in seq_along(raster_files)) {
 
   sdm <- rast(raster_file)
 
-  # Check CRS
   if (is.na(crs(sdm)) || crs(sdm) == "") {
     stop(
       "SDM raster has no CRS: ",
@@ -189,15 +225,18 @@ for (i in seq_along(raster_files)) {
     )
   }
 
+
   # --------------------------------------------------------------------------
-  # 6.2 CHECK / MATCH CRS
+  # 6.2 MATCH PA CRS TO SDM CRS
   # --------------------------------------------------------------------------
 
   pa_for_extraction <- pa
 
   if (!same.crs(sdm, pa_for_extraction)) {
 
-    message("  CRS differs; transforming Protected Areas to SDM CRS.")
+    message(
+      "  CRS differs; transforming Protected Areas to SDM CRS."
+    )
 
     pa_for_extraction <- project(
       pa_for_extraction,
@@ -217,13 +256,10 @@ for (i in seq_along(raster_files)) {
     na.rm = TRUE
   )
 
-  # Expected structure:
-  #   ID = Protected Area identifier
-  #   layer value = mean suitability
-
   suitability_column <- names(extracted)[2]
 
   extracted$mean_suitability <- extracted[[suitability_column]]
+
 
   # --------------------------------------------------------------------------
   # 6.4 REMOVE PAs WITHOUT VALID SUITABILITY VALUES
@@ -247,7 +283,7 @@ for (i in seq_along(raster_files)) {
 
 
   # --------------------------------------------------------------------------
-  # 6.5 CALCULATE THRESHOLDS
+  # 6.5 CALCULATE SUITABILITY THRESHOLDS
   # --------------------------------------------------------------------------
 
   p75_threshold <- as.numeric(
@@ -266,27 +302,27 @@ for (i in seq_along(raster_files)) {
 
 
   # --------------------------------------------------------------------------
-  # 6.6 ATTACH SUITABILITY VALUES TO PROTECTED AREAS
+  # 6.6 MATCH SUITABILITY VALUES BACK TO PA FEATURES
   # --------------------------------------------------------------------------
 
   pa_with_scores <- pa_for_extraction
 
   pa_with_scores$mean_suitability <- NA_real_
 
-  # ID produced by terra::extract() corresponds to feature order.
   pa_with_scores$mean_suitability[
     extracted$ID
   ] <- extracted$mean_suitability
 
 
   # --------------------------------------------------------------------------
-  # 6.7 APPLY 75TH PERCENTILE FILTER
+  # 6.7 APPLY 75TH-PERCENTILE FILTER
   # --------------------------------------------------------------------------
 
   pa_p75 <- pa_with_scores[
     !is.na(pa_with_scores$mean_suitability) &
       pa_with_scores$mean_suitability > p75_threshold,
   ]
+
 
   # --------------------------------------------------------------------------
   # 6.8 APPLY ABOVE-MEAN FILTER
@@ -299,7 +335,7 @@ for (i in seq_along(raster_files)) {
 
 
   # --------------------------------------------------------------------------
-  # 6.9 CLEAN OUTPUT NAMES
+  # 6.9 CREATE CLEAN OUTPUT NAMES
   # --------------------------------------------------------------------------
 
   species_name <- tools::file_path_sans_ext(
