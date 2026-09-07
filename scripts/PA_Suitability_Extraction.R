@@ -1,7 +1,7 @@
 
 # SCRIPT: Spatial Filtering of Protected Areas (PAs) Based on SDM Suitability
 # AUTHOR: Oluwadamilola Ogundipe
-#
+
 # PURPOSE
 #   Extracts mean suitability values from species-specific SDM rasters,
 #   identifies suitable Protected Areas (PAs) using two alternative
